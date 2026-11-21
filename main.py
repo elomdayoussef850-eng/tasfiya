@@ -322,8 +322,8 @@ class CrateRow(BoxLayout):
     def __init__(self, page, **kw):
         super().__init__(size_hint_y=None, height=dp(56), spacing=dp(6), **kw)
         self.page = page
-        self.map = {ar(t['name']): t for t in store().types}
-        names = list(self.map)
+        self.tmap = {ar(t['name']): t for t in store().types}
+        names = list(self.tmap)
         self.spin = make_spinner(names[0] if names else ar('اختر'), names)
         self.spin.size_hint_x = .42
         self.empty = Num(hint_text='فارغ', size_hint_x=.30)
@@ -338,11 +338,11 @@ class CrateRow(BoxLayout):
             self.add_widget(w)
 
     def on_type(self, *a):
-        t = self.map.get(self.spin.text)
+        t = self.tmap.get(self.spin.text)
         self.empty.text = fmt(t['weight']) if t else ''
 
     def data(self):
-        t = self.map.get(self.spin.text)
+        t = self.tmap.get(self.spin.text)
         return {'name': t['name'] if t else '',
                 'empty': self.empty.val(), 'count': int(self.count.val())}
 
@@ -353,8 +353,8 @@ class ClearPage(Page):
     def build(self):
         b = self.body
         b.add_widget(L('اسم العربية أو صاحبها (اختياري)'))
-        self.name = ArInput(hint_text='مثال: عربية أحمد')
-        b.add_widget(self.name)
+        self.name_in = ArInput(hint_text='مثال: عربية أحمد')
+        b.add_widget(self.name_in)
         b.add_widget(L('الوزن الإجمالي للعربية (كجم)'))
         self.gross = Num(hint_text='0')
         self.gross.bind(text=self.calc)
@@ -410,7 +410,7 @@ class ClearPage(Page):
             return
         r = CrateRow(self)
         if d:
-            for k, t in r.map.items():
+            for k, t in r.tmap.items():
                 if t['name'] == d['name']:
                     r.spin.text = k
             r.empty.text = fmt(d['empty'])
@@ -445,7 +445,7 @@ class ClearPage(Page):
         self.l_net.color = RED if net < 0 else DARK
 
     def reset(self):
-        self.name.set_raw('')
+        self.name_in.set_raw('')
         self.gross.text = ''
         self.rows_box.clear_widgets()
         self.rows = []
@@ -463,7 +463,7 @@ class ClearPage(Page):
         s.data['records'].insert(0, {
             'id': int(time.time() * 1000),
             'date': time.strftime('%Y-%m-%d %H:%M'),
-            'name': self.name.raw.strip(), 'gross': gross, 'rows': rows,
+            'name': self.name_in.raw.strip(), 'gross': gross, 'rows': rows,
             'crates_count': cnt, 'crates_weight': w, 'net': net})
         s.save()
         message('تم', 'تم حفظ العملية. الصافي: %s كجم' % fmt(net))
