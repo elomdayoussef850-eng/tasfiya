@@ -10,10 +10,13 @@ except ImportError:
     from bidi import get_display
 
 from kivy.app import App
+from kivy.clock import Clock
+from kivy.core.clipboard import Clipboard
 from kivy.core.text import LabelBase, DEFAULT_FONT
 from kivy.core.window import Window
 from kivy.graphics import Color, RoundedRectangle
 from kivy.metrics import dp, sp
+from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
@@ -34,6 +37,7 @@ GREEN = (0.02, 0.34, 0.22, 1)
 DARK = (0.01, 0.22, 0.15, 1)
 GREEN2 = (0.08, 0.48, 0.31, 1)
 GOLD = (0.76, 0.57, 0.22, 1)
+EDIT = (0.70, 0.45, 0.05, 1)
 BG = (0.96, 0.95, 0.91, 1)
 WHITE = (1, 1, 1, 1)
 TEXT = (0.13, 0.17, 0.15, 1)
@@ -41,6 +45,10 @@ GRAY = (0.48, 0.53, 0.50, 1)
 RED = (0.72, 0.16, 0.14, 1)
 Window.clearcolor = BG
 Window.softinput_mode = 'below_target'
+
+PAGE_SIZE = 50
+PERIODS = (('all', 'الكل'), ('today', 'اليوم'),
+           ('week', '7 أيام'), ('month', 'الشهر'))
 
 _reshaper = arabic_reshaper.ArabicReshaper()
 
@@ -120,6 +128,42 @@ class L(Label):
 
     def set(self, t):
         self.text = ar(t)
+
+class AccentBar(Widget):
+    def __init__(self, color=GREEN, **kw):
+        super().__init__(size_hint_x=None, width=dp(5), **kw)
+        with self.canvas:
+            Color(*color)
+            self._rect = RoundedRectangle(pos=self.pos, size=self.size,
+                                          radius=[dp(3)])
+        self.bind(pos=self._u, size=self._u)
+
+    def _u(self, *a):
+        self._rect.pos, self._rect.size = self.pos, self.size
+
+class TapCard(ButtonBehavior, Card):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self._base = tuple(self._c.rgba)
+        self.bind(state=self._press)
+
+    def _press(self, inst, st):
+        self._c.rgba = (0.89, 0.93, 0.90, 1) if st == 'down' else self._base
+
+class MenuCard(TapCard):
+    def __init__(self, title, sub, **kw):
+        super().__init__(orientation='horizontal', size_hint_y=None,
+                         height=dp(92), padding=[dp(14), dp(10), dp(8), dp(10)],
+                         spacing=dp(10), **kw)
+        self.add_widget(L('‹', halign='center', bold=True, color=GOLD,
+                          font_size=sp(34), size_hint_x=None, width=dp(30),
+                          height=dp(72)))
+        mid = BoxLayout(orientation='vertical')
+        mid.add_widget(L(title, bold=True, color=GREEN, font_size=sp(21),
+                         height=dp(38)))
+        mid.add_widget(L(sub, color=GRAY, font_size=sp(14), height=dp(30)))
+        self.add_widget(mid)
+        self.add_widget(AccentBar(color=GOLD))
 
 class B(Button):
     def __init__(self, text, bg=GREEN, h=56, **kw):
@@ -217,22 +261,22 @@ def popup(title, content, h=300):
 
 def message(title, text):
     box = BoxLayout(orientation='vertical', padding=dp(8), spacing=dp(10))
-    lb = L(text, halign='center', height=dp(90))
+    lb = L(text, halign='center', height=dp(90), shorten=False)
     box.add_widget(lb)
     b = B('حسنًا')
     box.add_widget(b)
-    p = popup(title, box, 230)
+    p = popup(title, box, 240)
     b.bind(on_release=p.dismiss)
 
 def confirm(title, text, on_yes):
     box = BoxLayout(orientation='vertical', padding=dp(8), spacing=dp(10))
-    box.add_widget(L(text, halign='center', height=dp(90)))
+    box.add_widget(L(text, halign='center', height=dp(90), shorten=False))
     row = BoxLayout(size_hint_y=None, height=dp(56), spacing=dp(10))
     yes, no = B('نعم', bg=RED), B('إلغاء', bg=GRAY)
     row.add_widget(no)
     row.add_widget(yes)
     box.add_widget(row)
-    p = popup(title, box, 230)
+    p = popup(title, box, 240)
     no.bind(on_release=p.dismiss)
     def _y(*a):
         p.dismiss()
@@ -289,7 +333,7 @@ class HomePage(Page):
 
     def build(self):
         self.body.padding = [dp(16), dp(22)]
-        self.body.spacing = dp(15)
+        self.body.spacing = dp(14)
         hero = Card(orientation='vertical', bg=WHITE, size_hint_y=None,
                     height=dp(132), padding=dp(12), spacing=dp(4))
         hero.add_widget(L('نظام إدارة وتصفية أوزان العربيات',
@@ -298,12 +342,14 @@ class HomePage(Page):
         hero.add_widget(L('حساب البرانيك والوزن الصافي بسهولة ودقة',
                           halign='center', color=GRAY, font_size=sp(15)))
         self.body.add_widget(hero)
-        for txt, scr in (('تصفية عربية', 'clear'),
-                         ('سجل العمليات', 'history'),
-                         ('إعداد أنواع البرانيك', 'settings')):
-            b = B(txt, h=78, font_size=sp(22))
-            b.bind(on_release=lambda i, s=scr: App.get_running_app().go(s))
-            self.body.add_widget(b)
+        for txt, sub, scr in (
+                ('تصفية عربية', 'احسب الوزن الصافي لعربية جديدة', 'clear'),
+                ('سجل العمليات', 'استعرض وابحث وعدّل العمليات', 'history'),
+                ('إعداد أنواع البرانيك', 'أضف الأنواع وأوزانها الفارغة',
+                 'settings')):
+            c = MenuCard(txt, sub)
+            c.bind(on_release=lambda i, s=scr: App.get_running_app().go(s))
+            self.body.add_widget(c)
 
 class CrateRow(BoxLayout):
     def __init__(self, page, **kw):
@@ -337,7 +383,10 @@ class ClearPage(Page):
     title = 'تصفية عربية'
 
     def build(self):
+        self.editing_id = None
         b = self.body
+        self.edit_lbl = L('', bold=True, color=EDIT, halign='center', height=0)
+        b.add_widget(self.edit_lbl)
         b.add_widget(L('اسم العربية أو صاحبها (اختياري)', bold=True))
         self.name_in = ArInput(hint_text='اكتب اسم العربية أو صاحبها')
         b.add_widget(self.name_in)
@@ -386,6 +435,24 @@ class ClearPage(Page):
         b.add_widget(rst)
         self.reset()
 
+    def set_edit(self, rec_id):
+        self.editing_id = rec_id
+        if rec_id:
+            self.edit_lbl.set('وضع تعديل عملية محفوظة')
+            self.edit_lbl.height = dp(34)
+        else:
+            self.edit_lbl.set('')
+            self.edit_lbl.height = 0
+
+    def load_record(self, rec):
+        self.name_in.set_raw(rec.get('name', ''))
+        self.rows_box.clear_widgets()
+        self.rows = []
+        self.gross.text = fmt(rec['gross'])
+        for d in (rec.get('rows') or [None])[:10]:
+            self.add_row(None, d)
+        self.set_edit(rec['id'])
+
     def on_pre_enter(self, *a):
         if hasattr(self, 'rows'):
             old = [r.data() for r in self.rows]
@@ -394,14 +461,25 @@ class ClearPage(Page):
             for d in old or [None]:
                 self.add_row(None, d)
 
+    def on_leave(self, *a):
+        if self.editing_id:
+            self.reset()
+
     def add_row(self, inst=None, d=None):
         if len(self.rows) >= 10:
             return
         r = CrateRow(self)
         if d:
+            found = False
             for k, t in r.tmap.items():
                 if t['name'] == d['name']:
                     r.spin.text = k
+                    found = True
+            if not found and d['name']:
+                k = ar(d['name'])
+                r.tmap[k] = {'name': d['name'], 'weight': d['empty']}
+                r.spin.values = list(r.tmap)
+                r.spin.text = k
             r.empty.text = fmt(d['empty'])
             r.count.text = str(d['count']) if d['count'] else ''
         self.rows.append(r)
@@ -439,6 +517,7 @@ class ClearPage(Page):
         self.rows_box.clear_widgets()
         self.rows = []
         self.add_row()
+        self.set_edit(None)
 
     def save(self, *a):
         gross = self.gross.val()
@@ -451,85 +530,316 @@ class ClearPage(Page):
         if not rows:
             return message('تنبيه', 'أدخل عدد البرانيك أولًا')
         s = store()
-        s.data['records'].insert(0, {
-            'id': int(time.time() * 1000),
-            'date': time.strftime('%Y-%m-%d %H:%M'),
-            'name': self.name_in.raw.strip(), 'gross': gross, 'rows': rows,
-            'crates_count': cnt, 'crates_weight': w, 'net': net})
+        fields = {'name': self.name_in.raw.strip(), 'gross': gross,
+                  'rows': rows, 'crates_count': cnt, 'crates_weight': w,
+                  'net': net}
+        if self.editing_id:
+            found = False
+            for i, old in enumerate(s.data['records']):
+                if old['id'] == self.editing_id:
+                    rec = dict(old)
+                    rec.update(fields)
+                    rec['edited'] = time.strftime('%Y-%m-%d %H:%M')
+                    s.data['records'][i] = rec
+                    found = True
+                    break
+            if found:
+                s.save()
+                message('تم التعديل', 'تم حفظ التعديل. الوزن الصافي: %s كجم'
+                        % fmt(net))
+                self.reset()
+                App.get_running_app().go('history')
+                return
+        rec = {'id': int(time.time() * 1000),
+               'date': time.strftime('%Y-%m-%d %H:%M')}
+        rec.update(fields)
+        s.data['records'].insert(0, rec)
         s.save()
         message('تم الحفظ', 'تم حفظ العملية. الوزن الصافي: %s كجم' % fmt(net))
         self.reset()
 
-class RecordCard(Button):
+def rec_lines(rec):
+    out = ['التاريخ: ' + rec['date']]
+    if rec.get('edited'):
+        out.append('آخر تعديل: ' + rec['edited'])
+    if rec.get('name'):
+        out.append('الاسم: ' + rec['name'])
+    out.append('الوزن الإجمالي: %s كجم' % fmt(rec['gross']))
+    for r in rec['rows']:
+        out.append('%s: %d × %s = %s كجم' % (
+            r['name'], r['count'], fmt(r['empty']),
+            fmt(r['count'] * r['empty'])))
+    out.append('إجمالي البرانيك: %d (%s كجم)' % (
+        rec['crates_count'], fmt(rec['crates_weight'])))
+    out.append('الوزن الصافي: %s كجم' % fmt(rec['net']))
+    return out
+
+class RecordCard(TapCard):
     def __init__(self, rec, **kw):
-        l1 = '%s   %s' % (rec['date'], rec.get('name', ''))
-        l2 = 'الصافي: %s كجم  |  الإجمالي: %s كجم' % (
-            fmt(rec['net']), fmt(rec['gross']))
-        super().__init__(text=ar(l1) + '\n' + ar(l2), halign='right',
-            valign='middle', font_size=sp(15), background_normal='',
-            background_down='', background_color=WHITE, color=TEXT,
-            size_hint_y=None, height=dp(82), padding=(dp(12), dp(6)), **kw)
-        self.bind(size=lambda *a: setattr(self, 'text_size', self.size))
+        super().__init__(orientation='horizontal', size_hint_y=None,
+                         height=dp(100), padding=[dp(12), dp(8), dp(8), dp(8)],
+                         spacing=dp(10), **kw)
+        left = BoxLayout(orientation='vertical', size_hint_x=.36)
+        left.add_widget(L('الصافي', halign='center', color=GRAY,
+                          font_size=sp(13), height=dp(20)))
+        left.add_widget(L(fmt(rec['net']), halign='center', bold=True,
+                          color=GREEN, font_size=sp(26), height=dp(42)))
+        left.add_widget(L('كجم', halign='center', color=GRAY,
+                          font_size=sp(13), height=dp(20)))
+        right = BoxLayout(orientation='vertical', size_hint_x=.64)
+        right.add_widget(L(rec.get('name') or 'بدون اسم', bold=True,
+                           font_size=sp(18), height=dp(30)))
+        date = rec['date'] + ('  (معدّل)' if rec.get('edited') else '')
+        right.add_widget(L(date, color=GRAY, font_size=sp(14), height=dp(24)))
+        right.add_widget(L('إجمالي %s كجم  •  %d برنيك' % (
+            fmt(rec['gross']), rec['crates_count']),
+            font_size=sp(14), height=dp(28)))
+        self.add_widget(left)
+        self.add_widget(right)
+        self.add_widget(AccentBar())
 
 class HistoryPage(Page):
     title = 'سجل العمليات'
 
-    def on_pre_enter(self, *a):
+    def build(self):
+        self.period = 'all'
+        self.limit = PAGE_SIZE
+        self._ev = None
         b = self.body
-        b.clear_widgets()
-        recs = store().data['records']
-        if not recs:
-            b.add_widget(L('لا توجد عمليات سابقة', halign='center',
-                           height=dp(80)))
-            return
-        tot = sum(r['net'] for r in recs)
-        b.add_widget(L('عدد العمليات: %d  |  مجموع الصافي: %s كجم' % (
-            len(recs), fmt(tot)), bold=True, font_size=sp(15)))
-        for rec in recs:
-            c = RecordCard(rec)
-            c.bind(on_release=lambda i, r=rec: self.show(r))
-            b.add_widget(c)
-        clr = B('مسح كل السجل', bg=RED, h=52)
+        self.search = ArInput(hint_text='ابحث بالاسم أو التاريخ')
+        self.search.bind(text=self.on_search)
+        b.add_widget(self.search)
+
+        prow = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(5))
+        self.pbtns = {}
+        for key, label in reversed(PERIODS):
+            btn = B(label, bg=GRAY, h=46, font_size=sp(15))
+            btn.bind(on_release=lambda i, k=key: self.set_period(k))
+            self.pbtns[key] = btn
+            prow.add_widget(btn)
+        b.add_widget(prow)
+
+        self.sum_box = Card(orientation='vertical', size_hint_y=None,
+                            padding=dp(10), spacing=dp(2))
+        self.sum_box.bind(minimum_height=self.sum_box.setter('height'))
+        b.add_widget(self.sum_box)
+
+        self.list_box = BoxLayout(orientation='vertical', size_hint_y=None,
+                                  spacing=dp(8))
+        self.list_box.bind(minimum_height=self.list_box.setter('height'))
+        b.add_widget(self.list_box)
+
+        row = BoxLayout(size_hint_y=None, height=dp(52), spacing=dp(8))
+        bk = B('نسخ احتياطي', bg=GREEN2, h=52, font_size=sp(16))
+        rs = B('استرجاع', bg=GREEN2, h=52, font_size=sp(16))
+        bk.bind(on_release=self.backup)
+        rs.bind(on_release=self.restore)
+        row.add_widget(rs)
+        row.add_widget(bk)
+        b.add_widget(row)
+        clr = B('مسح كل السجل', bg=RED, h=50, font_size=sp(16))
         clr.bind(on_release=lambda *a: confirm(
             'مسح السجل', 'سيتم حذف كل العمليات. هل أنت متأكد؟', self.clear_all))
         b.add_widget(clr)
+        self.mark_period()
+
+    def on_pre_enter(self, *a):
+        self.refresh(True)
+
+    def mark_period(self):
+        for k, btn in self.pbtns.items():
+            c = GREEN if k == self.period else GRAY
+            btn._bg = c
+            btn.background_color = c
+
+    def set_period(self, key):
+        self.period = key
+        self.mark_period()
+        self.refresh(True)
+
+    def on_search(self, *a):
+        if self._ev:
+            self._ev.cancel()
+        self._ev = Clock.schedule_once(lambda dt: self.refresh(True), .35)
+
+    def filtered(self):
+        q = self.search.raw.strip().lower()
+        today = time.strftime('%Y-%m-%d')
+        month = time.strftime('%Y-%m')
+        week = time.strftime('%Y-%m-%d',
+                             time.localtime(time.time() - 6 * 86400))
+        out = []
+        for r in store().data['records']:
+            d = r.get('date', '')
+            if self.period == 'today' and d[:10] != today:
+                continue
+            if self.period == 'week' and d[:10] < week:
+                continue
+            if self.period == 'month' and d[:7] != month:
+                continue
+            if q:
+                hay = ' '.join([d, r.get('name', '')] +
+                               [x['name'] for x in r.get('rows', [])]).lower()
+                if q not in hay:
+                    continue
+            out.append(r)
+        return out
+
+    def summary(self, recs):
+        box = self.sum_box
+        box.clear_widgets()
+        net = sum(r['net'] for r in recs)
+        gross = sum(r['gross'] for r in recs)
+        cc = sum(r['crates_count'] for r in recs)
+        cw = sum(r['crates_weight'] for r in recs)
+        agg = {}
+        for r in recs:
+            for x in r['rows']:
+                c, w = agg.get(x['name'], (0, 0.0))
+                agg[x['name']] = (c + x['count'], w + x['count'] * x['empty'])
+        box.add_widget(L('ملخص الفترة', bold=True, color=GREEN,
+                         font_size=sp(17), height=dp(32)))
+        box.add_widget(L('عدد العمليات: %d' % len(recs), height=dp(30),
+                         font_size=sp(16)))
+        box.add_widget(L('مجموع الصافي: %s كجم' % fmt(net), bold=True,
+                         color=DARK, font_size=sp(20), height=dp(40)))
+        box.add_widget(L('مجموع الإجمالي: %s كجم' % fmt(gross), height=dp(30),
+                         font_size=sp(16)))
+        box.add_widget(L('إجمالي البرانيك: %d (%s كجم)' % (cc, fmt(cw)),
+                         height=dp(30), font_size=sp(16)))
+        for name, (c, w) in agg.items():
+            box.add_widget(L('%s: %d (%s كجم)' % (name, c, fmt(w)),
+                             color=GRAY, font_size=sp(15), height=dp(28)))
+
+    def refresh(self, reset=False):
+        if reset:
+            self.limit = PAGE_SIZE
+        recs = self.filtered()
+        self.summary(recs)
+        lb = self.list_box
+        lb.clear_widgets()
+        if not store().data['records']:
+            lb.add_widget(L('لا توجد عمليات سابقة', halign='center',
+                            height=dp(70)))
+            return
+        if not recs:
+            lb.add_widget(L('لا توجد عمليات مطابقة', halign='center',
+                            height=dp(70)))
+            return
+        for rec in recs[:self.limit]:
+            c = RecordCard(rec)
+            c.bind(on_release=lambda i, r=rec: self.show(r))
+            lb.add_widget(c)
+        rest = len(recs) - self.limit
+        if rest > 0:
+            more = B('عرض الأقدم (%d متبقية)' % rest, bg=GREEN2, h=50,
+                     font_size=sp(16))
+            more.bind(on_release=self.show_more)
+            lb.add_widget(more)
+
+    def show_more(self, *a):
+        self.limit += PAGE_SIZE
+        self.refresh()
 
     def show(self, rec):
-        lines = ['التاريخ: ' + rec['date']]
-        if rec.get('name'):
-            lines.append('الاسم: ' + rec['name'])
-        lines.append('الوزن الإجمالي: %s كجم' % fmt(rec['gross']))
-        for r in rec['rows']:
-            lines.append('%s: %d × %s = %s كجم' % (
-                r['name'], r['count'], fmt(r['empty']),
-                fmt(r['count'] * r['empty'])))
-        lines.append('إجمالي البرانيك: %d (%s كجم)' % (
-            rec['crates_count'], fmt(rec['crates_weight'])))
-        lines.append('الوزن الصافي: %s كجم' % fmt(rec['net']))
         box = BoxLayout(orientation='vertical', spacing=dp(8))
-        box.add_widget(lines_view(lines))
-        row = BoxLayout(size_hint_y=None, height=dp(54), spacing=dp(8))
-        close, dele = B('إغلاق', bg=GRAY, h=54), B('حذف', bg=RED, h=54)
-        row.add_widget(close)
-        row.add_widget(dele)
-        box.add_widget(row)
-        p = popup('تفاصيل العملية', box, 460)
+        box.add_widget(lines_view(rec_lines(rec)))
+        r1 = BoxLayout(size_hint_y=None, height=dp(50), spacing=dp(8))
+        r2 = BoxLayout(size_hint_y=None, height=dp(50), spacing=dp(8))
+        close = B('إغلاق', bg=GRAY, h=50, font_size=sp(16))
+        dele = B('حذف', bg=RED, h=50, font_size=sp(16))
+        edit = B('تعديل', bg=GREEN2, h=50, font_size=sp(16))
+        share = B('نسخ كنص', bg=GREEN2, h=50, font_size=sp(16))
+        r1.add_widget(close)
+        r1.add_widget(dele)
+        r2.add_widget(share)
+        r2.add_widget(edit)
+        box.add_widget(r2)
+        box.add_widget(r1)
+        p = popup('تفاصيل العملية', box, 540)
         close.bind(on_release=p.dismiss)
+
         def _del(*a):
             p.dismiss()
             confirm('حذف', 'حذف هذه العملية؟', lambda: self.delete(rec))
+
+        def _edit(*a):
+            p.dismiss()
+            app = App.get_running_app()
+            app.sm.get_screen('clear').load_record(rec)
+            app.go('clear')
+
+        def _share(*a):
+            try:
+                Clipboard.copy('\n'.join(rec_lines(rec)))
+            except Exception:
+                return message('خطأ', 'تعذر النسخ إلى الحافظة')
+            message('تم النسخ', 'تم نسخ التفاصيل. الصقها في واتساب')
         dele.bind(on_release=_del)
+        edit.bind(on_release=_edit)
+        share.bind(on_release=_share)
 
     def delete(self, rec):
         store().data['records'] = [r for r in store().data['records']
                                    if r['id'] != rec['id']]
         store().save()
-        self.on_pre_enter()
+        self.refresh()
 
     def clear_all(self):
         store().data['records'] = []
         store().save()
-        self.on_pre_enter()
+        self.refresh(True)
+
+    def backup(self, *a):
+        recs = store().data['records']
+        if not recs:
+            return message('تنبيه', 'لا توجد عمليات لنسخها')
+        payload = {'app': 'tasfiya', 'v': 1, 'types': store().types,
+                   'records': recs}
+        try:
+            Clipboard.copy(json.dumps(payload, ensure_ascii=False))
+        except Exception:
+            return message('خطأ', 'تعذر النسخ إلى الحافظة')
+        message('تم النسخ', 'تم نسخ %d عملية. الصق النسخة في واتساب لنفسك '
+                'للاحتفاظ بها' % len(recs))
+
+    def restore(self, *a):
+        try:
+            data = json.loads(Clipboard.paste() or '')
+        except Exception:
+            data = None
+        if (not isinstance(data, dict) or data.get('app') != 'tasfiya'
+                or not isinstance(data.get('records'), list)):
+            return message('تنبيه', 'انسخ النسخة الاحتياطية أولًا ثم اضغط '
+                           'استرجاع')
+        need = ('id', 'date', 'gross', 'rows', 'net', 'crates_count',
+                'crates_weight')
+        ids = {r['id'] for r in store().data['records']}
+        new = [r for r in data['records'] if isinstance(r, dict)
+               and all(k in r for k in need) and r['id'] not in ids]
+        if not new:
+            return message('تنبيه', 'كل العمليات موجودة بالفعل')
+        confirm('استرجاع', 'سيتم إضافة %d عملية من النسخة الاحتياطية. '
+                'متابعة؟' % len(new),
+                lambda: self.apply_restore(new, data.get('types')))
+
+    def apply_restore(self, new, types):
+        s = store()
+        s.data['records'].extend(new)
+        s.data['records'].sort(key=lambda r: r['id'], reverse=True)
+        if isinstance(types, list):
+            names = {t['name'] for t in s.types}
+            for t in types:
+                try:
+                    if t['name'] not in names and float(t['weight']) > 0:
+                        s.types.append({'name': t['name'],
+                                        'weight': float(t['weight'])})
+                        names.add(t['name'])
+                except Exception:
+                    pass
+        s.save()
+        self.refresh(True)
+        message('تم الاسترجاع', 'تمت إضافة %d عملية' % len(new))
 
 class SettingsPage(Page):
     title = 'إعداد أنواع البرانيك'
